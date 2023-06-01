@@ -62,6 +62,7 @@ int RunServer() {
   builder.AddListeningPort(absl::GetFlag(FLAGS_port),
                            ::grpc::experimental::LocalServerCredentials(
                                grpc_local_connect_type::LOCAL_TCP));
+  builder.SetMaxReceiveMessageSize(INT_MAX); // consider limiting max message size
   builder.RegisterService(&service);
   std::unique_ptr<::grpc::Server> grpc_server(builder.BuildAndStart());
 

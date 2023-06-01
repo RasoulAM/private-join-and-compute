@@ -59,6 +59,8 @@ class InvokeServerHandleClientMessageSink : public MessageSink<ClientMessage> {
 
   Status Send(const ClientMessage& message) override {
     ::grpc::ClientContext client_context;
+    std::cout << "===== Client Sending Data: " << message.ByteSizeLong() << " Bytes" << std::endl;
+
     ::grpc::Status grpc_status =
         stub_->Handle(&client_context, message, &last_server_response_);
     if (grpc_status.ok()) {
@@ -94,6 +96,14 @@ int ExecuteProtocol() {
   auto client_identifiers_and_associated_values =
       std::move(maybe_client_identifiers_and_associated_values.value());
 
+  std::chrono::steady_clock::time_point total_start_, total_end_;
+  std::chrono::steady_clock::time_point sub_start_, sub_end_;
+  std::chrono::milliseconds elapsed;
+
+  total_start_ = std::chrono::steady_clock::now();
+  
+  sub_start_ = std::chrono::steady_clock::now();
+
   std::cout << "Client: Generating keys..." << std::endl;
   std::unique_ptr<::private_join_and_compute::ProtocolClient> client =
       std::make_unique<
@@ -102,13 +112,23 @@ int ExecuteProtocol() {
           std::move(client_identifiers_and_associated_values.second),
           absl::GetFlag(FLAGS_paillier_modulus_size));
 
+  grpc::ChannelArguments ch_args;
+  ch_args.SetMaxReceiveMessageSize(-1); // consider limiting max message size
+
+  sub_end_ = std::chrono::steady_clock::now();
+  elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(sub_end_ - sub_start_);
+  std::cout << "Key Gen Time (ms): " << elapsed.count() << std::endl;
+
   // Consider grpc::SslServerCredentials if not running locally.
   std::unique_ptr<PrivateJoinAndComputeRpc::Stub> stub =
-      PrivateJoinAndComputeRpc::NewStub(::grpc::CreateChannel(
+      PrivateJoinAndComputeRpc::NewStub(::grpc::CreateCustomChannel(
           absl::GetFlag(FLAGS_port), ::grpc::experimental::LocalCredentials(
-                                         grpc_local_connect_type::LOCAL_TCP)));
+                                         grpc_local_connect_type::LOCAL_TCP),
+                                         ch_args));
   InvokeServerHandleClientMessageSink invoke_server_handle_message_sink(
       std::move(stub));
+
+  sub_start_ = std::chrono::steady_clock::now();
 
   // Execute StartProtocol and wait for response from ServerRoundOne.
   std::cout
@@ -124,6 +144,8 @@ int ExecuteProtocol() {
   }
   ServerMessage server_round_one =
       invoke_server_handle_message_sink.last_server_response();
+
+  std::cout << "----> First Message Received: " << server_round_one.ByteSizeLong() << " Bytes" << std::endl;
 
   // Execute ClientRoundOne, and wait for response from ServerRoundTwo.
   std::cout
@@ -149,6 +171,8 @@ int ExecuteProtocol() {
   ServerMessage server_round_two =
       invoke_server_handle_message_sink.last_server_response();
 
+  std::cout << "----> Second Message Received: " << server_round_two.ByteSizeLong() << " Bytes" << std::endl;
+
   // Compute the intersection size and sum.
   std::cout << "Client: Received response from the server. Decrypting the "
                "intersection-sum."
@@ -161,6 +185,10 @@ int ExecuteProtocol() {
     return 1;
   }
 
+  sub_end_ = std::chrono::steady_clock::now();
+  elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(sub_end_ - sub_start_);
+  std::cout << "Interaction Time (ms): " << elapsed.count() << std::endl;
+
   // Output the result.
   auto client_print_output_status = client->PrintOutput();
   if (!client_print_output_status.ok()) {
@@ -168,6 +196,10 @@ int ExecuteProtocol() {
               << client_print_output_status << std::endl;
     return 1;
   }
+
+  total_end_ = std::chrono::steady_clock::now();
+  elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(total_end_ - total_start_);
+  std::cout << "End to end time (ms): " << elapsed.count() << std::endl;
 
   return 0;
 }
